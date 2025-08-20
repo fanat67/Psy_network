@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Psych-Swipe</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        :root {
+            --c-bg: #F5F7FA; --c-text: #1F2937; --c-subtext: #6B7280; --c-accent: #3B82F6;
+            --c-border: #E5E7EB; --c-category: #10B981; --c-topic: #EC4899; --c-method: #8B5CF6;
+            --c-dim: #D1D5DB; --c-highlight-bg: #EBF2FE;
+        }
+        html { scroll-behavior: smooth; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            display: flex; color: var(--c-text); background-color: var(--c-bg);
+            margin: 0; height: 100vh; overflow: hidden;
+        }
+        #controls { width: 340px; padding: 20px 25px; border-right: 1px solid var(--c-border); display: flex; flex-direction: column; }
+        #graph-container { flex-grow: 1; background-color: white; }
+        #panel-content { overflow-y: auto; flex-grow: 1; padding-right: 10px; }
+        h1 { font-size: 1.8em; margin-top: 0; }
+        h2 { font-size: 1.1em; border-bottom: 1px solid var(--c-border); padding-bottom: 8px; margin-top: 25px; font-weight: bold; }
+        h3 { font-size: 1.1em; color: var(--c-accent); }
+        .keywords-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 15px; }
+        .keyword-button {
+            cursor: pointer; border: 1px solid var(--c-border); background-color: #FFFFFF; padding: 5px 10px;
+            border-radius: 6px; user-select: none; transition: all 0.2s; font-size: 0.9em;
+        }
+        .keyword-button.selected { background-color: var(--c-accent); color: white; border-color: var(--c-accent); }
+        #results-list { list-style-type: none; padding-left: 0; margin-top: 15px; }
+        #results-list li { padding: 8px 10px; font-size: 0.95em; border-radius: 5px; cursor: pointer; border-bottom: 1px solid #f0f0f0; }
+        #results-list li:hover { background-color: #f0f3f5; }
+        #results-list li.highlighted { background-color: var(--c-highlight-bg); font-weight: bold; }
+
+        /* Styles for Keyword Dropdowns */
+        .keyword-group {
+            margin-top: 12px;
+            border-bottom: 1px solid var(--c-border);
+        }
+        .keyword-group-header {
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            padding: 8px 0;
+            font-weight: 500;
+        }
+        .keyword-group-header::before {
+            content: '►';
+            font-size: 0.8em;
+            margin-right: 10px;
+            transition: transform 0.2s ease-in-out;
+        }
+        .keyword-group.is-open > .keyword-group-header::before {
+            transform: rotate(90deg);
+        }
+        .nested-keywords {
+            display: none; /* Hide subcategories by default */
+            padding: 15px 0 15px 15px;
+            margin-left: 5px;
+            border-left: 2px solid var(--c-accent);
+        }
+        .keyword-group.is-open > .nested-keywords {
+            display: flex; /* Show them when the group is open */
+        }
+
+
+        .details-button {
+            display: none; width: 100%; padding: 12px; margin-top: 20px; font-size: 1em; font-weight: bold;
+            background-color: var(--c-accent); color: white; border: none; border-radius: 6px; cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .details-button:hover { background-color: #2563EB; }
+        .modal-overlay { display: none; position: fixed; z-index: 100; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.6); align-items: center; justify-content: center; }
+        .modal-content { background-color: #fefefe; margin: auto; padding: 30px; border-radius: 8px; width: 90%; max-width: 700px; position: relative; }
+        .modal-close { color: #aaa; position: absolute; top: 10px; right: 20px; font-size: 28px; font-weight: bold; cursor: pointer; }
+        .modal-close:hover, .modal-close:focus { color: black; }
+        .node text { pointer-events: none; font-size: 11px; fill: #555; }
+        .node.supervisor text { font-weight: bold; font-size: 13px; text-anchor: middle; paint-order: stroke; stroke: white; stroke-width: 3px; }
+        .dimmed { opacity: 0.2; }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <div>
+            <h1>Build Your Profile</h1>
+            <h3 id="points-label">Points Remaining: 25</h3>
+        </div>
+
+        <div id="panel-content">
+            <h2>Research Categories (3 Pts)</h2>
+            <div class="keywords-list">
+                <!-- FIX: Use |lower filter for data-keyword -->
+                {% for cat in all_categories %}<span class="keyword-button" data-keyword="{{ cat|lower }}" data-type="category">{{ cat }}</span>{% endfor %}
+            </div>
+            
+            <h2>Research Topics (2 Pts)</h2>
+            <div class="keyword-groups-container">
+            {% for group, specific_topics in topic_hierarchy.items() %}
+                <div class="keyword-group">
+                    <div class="keyword-group-header">
+                        <span class="group-title">{{ group }}</span>
+                    </div>
+                    <div class="nested-keywords keywords-list">
+                        <!-- FIX: Use |lower filter for data-keyword -->
+                        {% for topic in specific_topics %}
+                            <span class="keyword-button" data-keyword="{{ topic|lower }}" data-type="topic">{{ topic }}</span>
+                        {% endfor %}
+                    </div>
+                </div>
+            {% endfor %}
+            </div>
+
+            <h2>Research Methods (1 Pt)</h2>
+            <div class="keyword-groups-container">
+            {% for group, specific_methods in method_hierarchy.items() %}
+                <div class="keyword-group">
+                     <div class="keyword-group-header">
+                        <span class="group-title">{{ group }}</span>
+                    </div>
+                    <div class="nested-keywords keywords-list">
+                        <!-- FIX: Use |lower filter for data-keyword -->
+                        {% for method in specific_methods %}
+                            <span class="keyword-button" data-keyword="{{ method|lower }}" data-type="method">{{ method }}</span>
+                        {% endfor %}
+                    </div>
+                </div>
+            {% endfor %}
+            </div>
+
+            <h2 id="results-title" style="margin-top: 25px;">Top Matches</h2>
+            <ul id="results-list"><li>Spend points to see matches.</li></ul>
+            <button id="details-btn" class="details-button">Find Out More About Your Supervisors</button>
+        </div>
+    </div>
+
+    <div id="graph-container"></div>
+    <div id="details-modal" class="modal-overlay">
+        <div class="modal-content">
+            <span class="modal-close">&times;</span>
+            <div id="modal-body"></div>
+        </div>
+    </div>
+
+    <script>
+        // --- STATE & DATA ---
+        let pointsSpent = 0, highlightedSupervisor = null;
+        const totalPoints = 1000000, keywordScores = {};
+        // Data from Flask is already lowercased where necessary for matching
+        const SUPERVISOR_PROFILES = {{ SUPERVISOR_PROFILES|tojson }};
+        const ALL_CATEGORIES = {{ all_categories|tojson }};
+        const ALL_TOPICS_FLAT = {{ all_topics_flat|tojson }};
+        const ALL_METHODS_FLAT = {{ all_methods_flat|tojson }};
+        const POINT_COSTS = { category: 3, topic: 2, method: 1 };
+
+        // --- DOM REFERENCES ---
+        const controlsPanel = document.getElementById('controls'), pointsLabel = document.getElementById('points-label');
+        const resultsList = document.getElementById('results-list');
+        const graphContainer = document.getElementById('graph-container');
+        const detailsBtn = document.getElementById('details-btn');
+        const detailsModal = document.getElementById('details-modal');
+        const closeModalBtn = document.querySelector('.modal-close');
+
+        // --- EVENT LISTENERS ---
+        controlsPanel.addEventListener('click', function(event) {
+            const button = event.target.closest('.keyword-button');
+            const header = event.target.closest('.keyword-group-header');
+            const resultItem = event.target.closest('.result-item');
+
+            if (button) {
+                handleKeywordClick(button);
+            } else if (header) {
+                header.parentElement.classList.toggle('is-open');
+            } else if (resultItem) {
+                highlightedSupervisor = highlightedSupervisor === resultItem.dataset.name ? null : resultItem.dataset.name;
+                updateHighlight();
+            }
+        });
+
+        detailsBtn.addEventListener('click', showDetailsModal);
+        closeModalBtn.addEventListener('click', () => detailsModal.style.display = 'none');
+        detailsModal.addEventListener('click', e => { if (e.target === detailsModal) detailsModal.style.display = 'none'; });
+
+        function handleKeywordClick(button) {
+            const cost = POINT_COSTS[button.dataset.type];
+            const isSelected = button.classList.contains('selected');
+            if (!isSelected && (pointsSpent + cost <= totalPoints)) {
+                pointsSpent += cost;
+                button.classList.add('selected');
+            } else if (isSelected) {
+                pointsSpent -= cost;
+                button.classList.remove('selected');
+            } else { return; }
+            updateUI(true);
+        }
+
+        function updateUI(rebuildGraph = false) {
+            pointsLabel.innerText = `Points Remaining: ${totalPoints - pointsSpent}`;
+            document.querySelectorAll('.keyword-button').forEach(btn => {
+                // The keyword for matching is ALWAYS lowercase from data-keyword
+                keywordScores[btn.dataset.keyword] = btn.classList.contains('selected') ? 1 : 0;
+            });
+            updateResultsList();
+            if (rebuildGraph) updateGraph();
+            detailsBtn.style.display = (pointsSpent >= 20) ? 'block' : 'none';
+        }
+
+        function calculateSortedMatches() {
+            const weights = { "Categories": 3, "Topics": 2, "Methods": 1 };
+            let scores = {};
+            for (const [name, profile] of Object.entries(SUPERVISOR_PROFILES)) {
+                let total_score = 0;
+                // profile.Categories/Topics/Methods are already lowercase from Python
+                profile.Categories.forEach(k => total_score += (keywordScores[k] || 0) * weights.Categories);
+                profile.Topics.forEach(k => total_score += (keywordScores[k] || 0) * weights.Topics);
+                profile.Methods.forEach(k => total_score += (keywordScores[k] || 0) * weights.Methods);
+                if (total_score > 0) scores[name] = total_score;
+            }
+            return Object.entries(scores).map(([name, score]) => ({ name, score })).sort((a, b) => b.score - a.score);
+        }
+
+        function updateResultsList() {
+            const sorted_matches = calculateSortedMatches();
+            const resultsTitle = document.getElementById('results-title');
+            resultsList.innerHTML = '';
+            resultsTitle.innerText = `Top Matches (${sorted_matches.length})`;
+            if (sorted_matches.length === 0) {
+                resultsList.innerHTML = '<li>Spend points to see matches.</li>';
+                return;
+            }
+            sorted_matches.forEach((match, i) => {
+                const li = document.createElement('li');
+                li.className = 'result-item';
+                li.dataset.name = match.name;
+                li.innerText = `#${i + 1} ${match.name} (Score: ${match.score})`;
+                resultsList.appendChild(li);
+            });
+            updateHighlight();
+        }
+
+        function showDetailsModal() {
+            const sorted_matches = calculateSortedMatches();
+            const modalBody = document.getElementById('modal-body');
+            let contentHTML = '<h1>Your Top Matches</h1>';
+            if (sorted_matches.length === 0) {
+                contentHTML += '<p>No matches found based on your selections.</p>';
+            } else {
+                sorted_matches.forEach((match, index) => {
+                    const profile = SUPERVISOR_PROFILES[match.name];
+                    const activeKeywords = Object.keys(keywordScores).filter(k => keywordScores[k] > 0);
+                    // profile keywords are lowercase, activeKeywords are lowercase, so this works
+                    const matching_keywords = [...profile.Categories, ...profile.Topics, ...profile.Methods].filter(k => activeKeywords.includes(k));
+                    contentHTML += `
+                        <h3 style="color: var(--c-text); border-bottom: 1px solid var(--c-border); padding-bottom: 10px; margin-top: ${index === 0 ? '0' : '20px'};">#${index + 1} ${match.name} (Score: ${match.score})</h3>
+                        <p>${profile.info}</p>
+                        <p><b>Why they're a match:</b> You're both interested in ${matching_keywords.join(', ')}.</p>
+                        <p>
+                            <b>Contact:</b> <a href="mailto:${profile.contact}" style="color: var(--c-accent);">${profile.contact}</a> |
+                            <b><a href="${profile.publications}" target="_blank" style="color: var(--c-accent);">View Publications</a></b>
+                        </p>
+                    `;
+                });
+            }
+            modalBody.innerHTML = contentHTML;
+            detailsModal.style.display = 'flex';
+        }
+
+        // --- D3.JS GRAPH LOGIC ---
+        const width = graphContainer.clientWidth, height = graphContainer.clientHeight;
+        const svg = d3.select("#graph-container").append("svg").attr("width", width).attr("height", height).attr("viewBox", [0, 0, width, height]);
+        svg.append("rect").attr("width", width).attr("height", height).attr("fill", "white").on("click", () => {
+            highlightedSupervisor = null; updateHighlight();
+        });
+        const linkGroup = svg.append("g").attr("stroke-opacity", 0.6);
+        const nodeGroup = svg.append("g");
+        const simulation = d3.forceSimulation()
+            .force("link", d3.forceLink().id(d => d.id).distance(80))
+            .force("charge", d3.forceManyBody().strength(-500))
+            .force("center", d3.forceCenter(width / 2, height / 2).strength(0.1))
+            .on("tick", ticked);
+
+        // Drag functionality
+        function dragstarted(event, d) {
+            if (!event.active) simulation.alphaTarget(0.3).restart();
+            d.fx = d.x;
+            d.fy = d.y;
+        }
+
+        function dragged(event, d) {
+            d.fx = event.x;
+            d.fy = event.y;
+        }
+
+        function dragended(event, d) {
+            if (!event.active) simulation.alphaTarget(0);
+            d.fx = null;
+            d.fy = null;
+        }
+
+        function updateGraph() {
+            const activeKeywords = Object.keys(keywordScores).filter(k => keywordScores[k] > 0);
+            const visibleNodes = new Map(), visibleLinks = [];
+            
+            if (activeKeywords.length > 0) {
+                activeKeywords.forEach(kw => {
+                    // ALL_..._FLAT lists are already lowercased
+                    const type = ALL_CATEGORIES.map(c => c.toLowerCase()).includes(kw) ? "category" : ALL_TOPICS_FLAT.includes(kw) ? "topic" : "method";
+                    if (!visibleNodes.has(kw)) visibleNodes.set(kw, { id: kw, type });
+                });
+                for (const [supName, profile] of Object.entries(SUPERVISOR_PROFILES)) {
+                    // profile keywords are already lowercase
+                    const connections = [...profile.Categories, ...profile.Topics, ...profile.Methods].filter(c => activeKeywords.includes(c));
+                    if (connections.length > 0) {
+                        if (!visibleNodes.has(supName)) visibleNodes.set(supName, { id: supName, type: 'supervisor' });
+                        connections.forEach(kw => visibleLinks.push({ source: supName, target: kw }));
+                    }
+                }
+            }
+            simulation.nodes(Array.from(visibleNodes.values())).force("link").links(visibleLinks);
+            linkGroup.selectAll("line").data(visibleLinks, d => `${d.source.id}-${d.target.id}`).join("line").attr("stroke", "var(--c-dim)");
+            nodeGroup.selectAll("g.node").data(Array.from(visibleNodes.values()), d => d.id)
+                .join(enter => {
+                    const nodeEnter = enter.append("g").attr("class", d => `node ${d.type}`);
+                    nodeEnter.append("circle").attr("r", d => d.type === 'supervisor' ? 8 : 5).attr("stroke", d => d.type === 'supervisor' ? 'white' : 'none').attr("stroke-width", 2)
+                        .attr("fill", d => d.type === 'supervisor' ? "var(--c-text)" : d.type === 'category' ? "var(--c-category)" : d.type === 'topic' ? "var(--c-topic)" : "var(--c-method)");
+                    nodeEnter.append("text").text(d => d.id).attr("x", d => d.type === 'supervisor' ? 0 : 10).attr("y", d => d.type === 'supervisor' ? -14 : 4);
+                    return nodeEnter;
+                }).style("cursor", "pointer")
+                .call(d3.drag()
+                    .on("start", dragstarted)
+                    .on("drag", dragged)
+                    .on("end", dragended))
+                .on("click", (event, d) => {
+                    event.stopPropagation();
+                    if (d.type === 'supervisor') {
+                        highlightedSupervisor = highlightedSupervisor === d.id ? null : d.id;
+                        updateHighlight();
+                    }
+                });
+            updateHighlight();
+            simulation.alpha(0.3).restart();
+        }
+        function updateHighlight() {
+            const highlightNodes = new Set();
+            if (highlightedSupervisor) {
+                highlightNodes.add(highlightedSupervisor);
+                const profile = SUPERVISOR_PROFILES[highlightedSupervisor];
+                // profile keywords are already lowercase
+                if (profile) [...profile.Categories, ...profile.Topics, ...profile.Methods].forEach(kw => {
+                    if (keywordScores[kw] > 0) highlightNodes.add(kw);
+                });
+            }
+            nodeGroup.selectAll("g.node").classed("dimmed", d => highlightedSupervisor && !highlightNodes.has(d.id));
+            linkGroup.selectAll("line").classed("dimmed", d => highlightedSupervisor && (!highlightNodes.has(d.source.id) || !highlightNodes.has(d.target.id)));
+            document.querySelectorAll('#results-list li').forEach(li => {
+                li.classList.toggle('highlighted', li.dataset.name === highlightedSupervisor);
+            });
+        }
+        function ticked() {
+            const nodePadding = 15;
+            nodeGroup.selectAll("g.node").attr("transform", d => {
+                d.x = Math.max(nodePadding, Math.min(width - nodePadding, d.x));
+                d.y = Math.max(nodePadding, Math.min(height - nodePadding, d.y));
+                return `translate(${d.x},${d.y})`;
+            });
+            linkGroup.selectAll("line")
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                .attr("x2", d => d.target.x)
+                .attr("y2", d => d.target.y);
+        }
+        
+        // --- INITIALIZE THE APP ---
+        updateUI(true);
+    </script>
+</body>
+</html>
